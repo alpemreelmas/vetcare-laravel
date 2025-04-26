@@ -2,14 +2,13 @@
 
 namespace App\Http\Controllers;
 
-use App\Core\BaseApiController;
+use App\Core\Helpers\ResponseHelper;
 use App\Http\Requests\User\UpdateRequest;
 use App\Models\User;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Role;
 
-class UserController extends BaseApiController
+class UserController extends Controller
 {
     public function index()
     {
@@ -21,7 +20,7 @@ class UserController extends BaseApiController
         $user = User::with(['roles', 'permissions'])->findOrFail($userId);
         $roles = Role::all();
 
-        return self::success(data:[
+        return ResponseHelper::success(data: [
             'user' => $user,
             'roles' => $roles
         ]);
@@ -46,7 +45,7 @@ class UserController extends BaseApiController
             'email' => $request->email,
         ]);
 
-        return self::success(data: [
+        return ResponseHelper::success(data: [
             'user' => $user->load('roles', 'permissions'),
             'message' => 'User roles updated successfully'
         ]);

@@ -1,9 +1,9 @@
 <?php
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\UserController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 
 Route::prefix("/auth")->group(function () {
@@ -25,4 +25,7 @@ Route::prefix('users')->middleware("auth:sanctum")->group(function () {
     Route::put('{userId}', [UserController::class, 'update']);
 });
 
-Route::apiResource('roles', \App\Http\Controllers\RoleController::class)->middleware("auth:sanctum");
+Route::middleware('auth:sanctum')->group(function () {
+    Route::apiResource('roles', \App\Http\Controllers\RoleController::class);
+    Route::apiResource('pets', \App\Http\Controllers\PetController::class);
+});

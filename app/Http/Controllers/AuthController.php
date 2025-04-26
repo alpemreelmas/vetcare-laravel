@@ -2,14 +2,14 @@
 
 namespace App\Http\Controllers;
 
-use App\Core\BaseApiController;
+use App\Core\Helpers\ResponseHelper;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\RegisterRequest;
-use Illuminate\Http\Request;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
-class AuthController extends BaseApiController
+class AuthController extends Controller
 {
     public function register(RegisterRequest $request)
     {
@@ -22,7 +22,7 @@ class AuthController extends BaseApiController
         // TODO: refactor abilities of token
         $token = $user->createToken('api_auth_token')->plainTextToken;
 
-        return self::success('User registered successfully', [
+        return ResponseHelper::success('User registered successfully', [
             'user' => $user,
             'token' => $token,
         ]);
@@ -33,12 +33,12 @@ class AuthController extends BaseApiController
         $user = User::where('email', $request->email)->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
-            return self::error('Invalid credentials', 401);
+            return ResponseHelper::error('Invalid credentials', 401);
         }
 
         $token = $user->createToken('api_auth_token')->plainTextToken;
 
-        return self::success('User logged in successfully', [
+        return ResponseHelper::success('User logged in successfully', [
             'user' => $user,
             'token' => $token,
         ]);
@@ -48,6 +48,6 @@ class AuthController extends BaseApiController
     {
         $request->user()->currentAccessToken()->delete();
 
-        return self::success('User logged out successfully');
+        return ResponseHelper::success('User logged out successfully');
     }
 }

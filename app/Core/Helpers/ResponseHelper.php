@@ -1,10 +1,8 @@
 <?php
 
-namespace App\Core;
+namespace App\Core\Helpers;
 
-use App\Http\Controllers\Controller;
-
-class BaseApiController extends Controller
+class ResponseHelper
 {
     public static function success(string $message = "Operation is successfully", $data = null, int $status = 200)
     {
