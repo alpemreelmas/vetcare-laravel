@@ -78,7 +78,7 @@ class AppointmentController extends Controller
         $slotEnd = $slotStart->copy()->addMinutes(self::SLOT_DURATION);
 
         // Get all active doctors
-        $doctors = Doctor::where('status', 'active')->get();
+        $doctors = Doctor::all();
 
         $availableDoctors = [];
 
@@ -86,7 +86,7 @@ class AppointmentController extends Controller
             if ($this->isDoctorAvailableAtTime($doctor, $slotStart, $slotEnd)) {
                 $availableDoctors[] = [
                     'id' => $doctor->id,
-                    'name' => $doctor->name,
+                    'name' => $doctor->user->name,
                     'specialization' => $doctor->specialization,
                     'working_hours' => $doctor->working_hours,
                     'slot' => [
