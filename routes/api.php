@@ -42,6 +42,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('pets', \App\Http\Controllers\PetController::class);
 });
 
-Route::get('/doctors/{doctor}/available-slots', [\App\Http\Controllers\AppointmentController::class, 'index']);
 Route::get('/calendar', [\App\Http\Controllers\AppointmentController::class, 'calendar']);
-Route::get('/calendar-by-doctor', [\App\Http\Controllers\AppointmentController::class, 'getAvailableDoctors']);
+Route::get('/calendar/{doctor}', [\App\Http\Controllers\AppointmentController::class, 'getAvailableSlotsForDoctor']);
