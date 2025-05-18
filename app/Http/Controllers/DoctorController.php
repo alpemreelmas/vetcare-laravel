@@ -8,6 +8,7 @@ use App\Models\Doctor;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Spatie\Permission\Models\Role;
+use Symfony\Component\HttpFoundation\Response;
 
 class DoctorController extends Controller
 {
@@ -27,14 +28,29 @@ class DoctorController extends Controller
         );
     }
 
-    public function promoteToDoctor(User $user, PromotoDoctorRequest $request)
+    public function store(PromotoDoctorRequest $request)
     {
         $role = Role::where('name', 'doctor')->firstOrFail();
 
-        $user->assignRole($role);
+        $user = User::where('email', $request->email)->first();
 
-        $profile = Doctor::create([
-            'user_id' => $user->id,
+        if ($user) {
+            return ResponseHelper::error(
+                message: 'User already exist.',
+                status: Response::HTTP_BAD_REQUEST,
+            );
+        }
+
+        $newUser = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => bcrypt($request->password),
+        ]);
+
+        $newUser->assignRole($role);
+
+        Doctor::create([
+            'user_id' => $newUser->id,
             'specialization' => $request->specialization,
             'license_number' => $request->license_number,
             'phone_number' => $request->phone_number,
@@ -43,8 +59,8 @@ class DoctorController extends Controller
         ]);
 
         return ResponseHelper::success(
-            message: 'Doctor promoted successfully',
-            data: $profile,
+            message: 'Doctor created successfully',
+            data: $newUser->load('doctor'),
         );
     }
 

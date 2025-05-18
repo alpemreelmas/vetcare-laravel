@@ -22,6 +22,9 @@ class PromotoDoctorRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'string', 'max:255', 'unique:users,email'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
             'specialization' => ['nullable', 'string', 'max:255'],
             'license_number' => ['nullable', 'string'],
             'phone_number' => ['nullable', 'string'],

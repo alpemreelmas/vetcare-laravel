@@ -31,11 +31,11 @@ Route::prefix('users')
         Route::get('/', [UserController::class, 'index']);
         Route::get('{userId}', [UserController::class, 'show']);
         Route::put('{userId}', [UserController::class, 'update']);
-
-        Route::put('{user}/promote', [\App\Http\Controllers\DoctorController::class, 'promoteToDoctor'])
-            ->middleware('role:admin')
-            ->name('promote.doctor');
     });
+
+Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
+    Route::apiResource('doctors', \App\Http\Controllers\DoctorController::class);
+});
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('roles', \App\Http\Controllers\RoleController::class);
