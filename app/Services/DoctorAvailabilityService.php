@@ -7,91 +7,138 @@ use App\Models\Appointment;
 use App\Models\Doctor;
 use App\Models\RestrictedZone;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 
 class DoctorAvailabilityService
 {
-    /**
-     * Duration of each appointment slot in minutes
-     * 15 minutes for regular check and 5 minutes for rest, sum of it 20 minutes
-     */
     private const SLOT_DURATION = 20;
 
-    /**
-     * Get available appointment slots for a doctor on a specified date
-     */
-    public function getSlots(AvailableSlotsData $request, Doctor $doctor)
+    public function getSlots(AvailableSlotsData $request, Doctor $doctor): ?array
     {
-        $selectedDate = Carbon::parse($request->date)->startOfDay();
+        return $this->getAvailableSlotsForDoctorOnDate($request->date, $doctor);
+    }
+
+    public function getAvailableSlotsForDoctorOnDate(string $date, Doctor $doctor): ?array
+    {
+        $selectedDate = Carbon::parse($date)->startOfDay();
         $now = Carbon::now();
 
-        // Check if working hours are properly set
         $workingHoursString = $doctor->working_hours;
         if (!$this->hasValidWorkingHours($workingHoursString)) {
             return null;
         }
 
-        // Parse working hours
         [$startTime, $endTime] = $this->getWorkingHoursPeriod($selectedDate, $workingHoursString);
 
-        // If today, adjust start time to not show past slots
         if ($selectedDate->isSameDay($now) && $now->gt($startTime)) {
-            // Round up to the next slot time
-            $startTime = $now->copy();
-            $minutes = $startTime->minute;
-            $roundedMinutes = ceil($minutes / self::SLOT_DURATION) * self::SLOT_DURATION;
-
-            // If we need to go to the next hour
-            if ($roundedMinutes >= 60) {
-                $startTime->addHour();
-                $roundedMinutes = 0;
-            }
-
-            $startTime->setMinute($roundedMinutes)->setSecond(0);
+            $startTime = $this->roundUpStartTime($now);
         }
 
-        // No need to continue if start time is already past end time
         if ($startTime->gte($endTime)) {
             return null;
         }
 
-        // Get booked appointments
         $appointments = $this->getBookedAppointments($doctor->id, $startTime, $endTime);
-
-        // Get restricted zones
         $restrictedZones = $this->getRestrictedZones($doctor->id, $startTime, $endTime);
 
-        // Calculate available slots
-        $availableSlots = $this->calculateAvailableSlots($startTime, $endTime, $appointments, $restrictedZones);
-
-        return $availableSlots;
+        return $this->calculateAvailableSlots($startTime, $endTime, $appointments, $restrictedZones);
     }
 
-    /**
-     * Check if working hours are valid
-     */
+    public function getMultiDoctorSlots(AvailableSlotsData $request, Collection $doctors): array
+    {
+        $selectedDate = Carbon::parse($request->date)->startOfDay();
+        $now = Carbon::now();
+
+        $doctorWorkingHours = $doctors->filter(fn($doc) => $this->hasValidWorkingHours($doc->working_hours))
+            ->mapWithKeys(fn($doc) => [$doc->id => $this->getWorkingHoursPeriod($selectedDate, $doc->working_hours)]);
+
+        $minStart = $doctorWorkingHours->map(fn($times) => $times[0])->min();
+        $maxEnd = $doctorWorkingHours->map(fn($times) => $times[1])->max();
+
+        $appointments = Appointment::whereIn('doctor_id', $doctors->pluck('id'))
+            ->whereBetween('start_datetime', [$minStart->timestamp * 1000, $maxEnd->timestamp * 1000])
+            ->orWhereBetween('end_datetime', [$minStart->timestamp * 1000, $maxEnd->timestamp * 1000])
+            ->get()
+            ->groupBy('doctor_id');
+
+        $restrictedZones = RestrictedZone::whereIn('doctor_id', $doctors->pluck('id'))
+            ->whereBetween('start_datetime', [$minStart->timestamp * 1000, $maxEnd->timestamp * 1000])
+            ->orWhereBetween('end_datetime', [$minStart->timestamp * 1000, $maxEnd->timestamp * 1000])
+            ->get()
+            ->groupBy('doctor_id');
+
+        $results = [];
+
+        foreach ($doctors as $doctor) {
+            if (!$doctorWorkingHours->has($doctor->id)) continue;
+
+            [$startTime, $endTime] = $doctorWorkingHours[$doctor->id];
+
+            if ($selectedDate->isSameDay($now) && $now->gt($startTime)) {
+                $startTime = $this->roundUpStartTime($now);
+            }
+
+            if ($startTime->gte($endTime)) {
+                $results[$doctor->id] = [];
+                continue;
+            }
+
+            $doctorAppointments = $appointments[$doctor->id] ?? collect();
+            $doctorRestricted = $restrictedZones[$doctor->id] ?? collect();
+
+            $results[$doctor->id] = $this->calculateAvailableSlots($startTime, $endTime, $doctorAppointments, $doctorRestricted);
+        }
+
+        return $results;
+    }
+
+    public function getDoctorsAvailableInTimeRange(Carbon $startTime, Carbon $endTime, Collection $doctors): Collection
+    {
+        return $doctors->filter(function (Doctor $doctor) use ($startTime, $endTime) {
+            $workingHours = $doctor->working_hours;
+            if (!$this->hasValidWorkingHours($workingHours)) return false;
+
+            [$start, $end] = $this->getWorkingHoursPeriod($startTime->copy(), $workingHours);
+            if ($startTime->lt($end) && $endTime->gt($start)) {
+                $appointments = $this->getBookedAppointments($doctor->id, $startTime, $endTime);
+                $restrictedZones = $this->getRestrictedZones($doctor->id, $startTime, $endTime);
+
+                return !$this->hasConflict($startTime, $endTime, $appointments, $restrictedZones);
+            }
+
+            return false;
+        });
+    }
+
+    private function roundUpStartTime(Carbon $time): Carbon
+    {
+        $minutes = $time->minute;
+        $roundedMinutes = ceil($minutes / self::SLOT_DURATION) * self::SLOT_DURATION;
+
+        if ($roundedMinutes >= 60) {
+            $time->addHour();
+            $roundedMinutes = 0;
+        }
+
+        return $time->copy()->setMinute($roundedMinutes)->setSecond(0);
+    }
+
     private function hasValidWorkingHours(?string $workingHours): bool
     {
         return $workingHours && str_contains($workingHours, '-');
     }
 
-    /**
-     * Get working hours period (start and end time)
-     */
     private function getWorkingHoursPeriod(Carbon $date, string $workingHoursString): array
     {
         [$start, $end] = explode('-', $workingHoursString);
-        $startTime = $date->copy()->setTimeFromTimeString($start);
-        $endTime = $date->copy()->setTimeFromTimeString($end);
-
-        return [$startTime, $endTime];
+        return [
+            $date->copy()->setTimeFromTimeString($start),
+            $date->copy()->setTimeFromTimeString($end),
+        ];
     }
 
-    /**
-     * Get booked appointments for the specified time period
-     */
     private function getBookedAppointments(int $doctorId, Carbon $startTime, Carbon $endTime)
     {
-        // Convert Carbon timestamps to Unix timestamps (milliseconds)
         $startTimestamp = $startTime->timestamp * 1000;
         $endTimestamp = $endTime->timestamp * 1000;
 
@@ -106,12 +153,8 @@ class DoctorAvailabilityService
             })->get();
     }
 
-    /**
-     * Get restricted zones for the specified time period
-     */
     private function getRestrictedZones(int $doctorId, Carbon $startTime, Carbon $endTime)
     {
-        // Convert Carbon timestamps to Unix timestamps (milliseconds)
         $startTimestamp = $startTime->timestamp * 1000;
         $endTimestamp = $endTime->timestamp * 1000;
 
@@ -126,9 +169,6 @@ class DoctorAvailabilityService
             })->get();
     }
 
-    /**
-     * Calculate available slots based on working hours, appointments and restricted zones
-     */
     private function calculateAvailableSlots(Carbon $startTime, Carbon $endTime, $appointments, $restrictedZones): array
     {
         $availableSlots = [];
@@ -138,10 +178,8 @@ class DoctorAvailabilityService
             $slotStart = $cursor->copy();
             $slotEnd = $cursor->copy()->addMinutes(self::SLOT_DURATION);
 
-            // Break if slot exceeds end time
             if ($slotEnd->gt($endTime)) break;
 
-            // Check if slot conflicts with any appointment or restricted zone
             if (!$this->hasConflict($slotStart, $slotEnd, $appointments, $restrictedZones)) {
                 $availableSlots[] = [
                     'start' => $slotStart->format('H:i'),
@@ -155,28 +193,15 @@ class DoctorAvailabilityService
         return $availableSlots;
     }
 
-    /**
-     * Check if a slot conflicts with any appointment or restricted zone
-     */
     private function hasConflict(Carbon $slotStart, Carbon $slotEnd, $appointments, $restrictedZones): bool
     {
-        // Convert slot times to timestamps for comparison
         $slotStartTimestamp = $slotStart->timestamp * 1000;
         $slotEndTimestamp = $slotEnd->timestamp * 1000;
 
-        // Check appointments
-        $appointmentConflict = $appointments->first(function ($appointment) use ($slotStartTimestamp, $slotEndTimestamp) {
-            return $slotStartTimestamp < $appointment->end_datetime->timestamp && $slotEndTimestamp > $appointment->start_datetime->timestamp;
-        });
+        $appointmentConflict = $appointments->first(fn($a) => $slotStartTimestamp < $a->end_datetime->timestamp && $slotEndTimestamp > $a->start_datetime->timestamp);
+        if ($appointmentConflict) return true;
 
-        if ($appointmentConflict) {
-            return true;
-        }
-
-        // Check restricted zones
-        $restrictedZoneConflict = $restrictedZones->first(function ($restrictedZone) use ($slotStartTimestamp, $slotEndTimestamp) {
-            return $slotStartTimestamp < $restrictedZone->end_datetime && $slotEndTimestamp > $restrictedZone->start_datetime;
-        });
+        $restrictedZoneConflict = $restrictedZones->first(fn($z) => $slotStartTimestamp < $z->end_datetime && $slotEndTimestamp > $z->start_datetime);
 
         return $restrictedZoneConflict !== null;
     }

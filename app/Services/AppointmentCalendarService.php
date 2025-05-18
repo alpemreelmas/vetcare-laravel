@@ -19,9 +19,6 @@ class AppointmentCalendarService
     {
     }
 
-    /**
-     * Get calendar data for the specified date range
-     */
     public function getCalendarData(Carbon $startDate, Carbon $endDate): array
     {
         $doctors = $this->getActiveDoctors();
@@ -34,12 +31,36 @@ class AppointmentCalendarService
         $currentDate = $startDate->copy();
 
         while ($currentDate->lte($endDate)) {
-            $dayData = $this->buildDayData($doctors, $currentDate);
+            $requestData = new AvailableSlotsData(date: $currentDate->format('Y-m-d'));
+            $multiDoctorSlots = $this->doctorAvailabilityService->getMultiDoctorSlots($requestData, $doctors);
 
-            // Only include dates that have available slots
-            if ($dayData['total_available_slots'] > 0) {
-                $calendarData[] = $dayData;
+            $slotsByTime = [];
+
+            foreach ($multiDoctorSlots as $slots) {
+                foreach ($slots as $slot) {
+                    $start = $slot['start'];
+                    $key = $start;
+                    $slotsByTime[$key] = ($slotsByTime[$key] ?? 0) + 1;
+                }
             }
+
+            $formattedSlots = collect($slotsByTime)->map(function ($count, $start) use ($currentDate, $doctors) {
+                $startTime = $currentDate->copy()->setTimeFromTimeString($start);
+                $endTime = $startTime->copy()->addMinutes(self::SLOT_DURATION);
+                return [
+                    'time' => $start,
+                    'time_range' => $start . ' - ' . $endTime->format('H:i'),
+                    'available_count' => $count,
+                    'total_doctors' => $doctors->count()
+                ];
+            })->values()->all();
+
+            $calendarData[] = [
+                'date' => $currentDate->format('Y-m-d'),
+                'day_name' => $currentDate->format('l'),
+                'available_slots' => $formattedSlots,
+                'total_available_slots' => collect($formattedSlots)->sum('available_count')
+            ];
 
             $currentDate->addDay();
         }
@@ -47,132 +68,30 @@ class AppointmentCalendarService
         return $calendarData;
     }
 
-    /**
-     * Get available doctors for a specific time slot
-     */
     public function getAvailableDoctorsForSlot(Carbon $date, string $time): array
     {
         $doctors = $this->getActiveDoctors();
         $slotStart = $date->copy()->setTimeFromTimeString($time);
         $slotEnd = $slotStart->copy()->addMinutes(self::SLOT_DURATION);
 
+        $requestData = new AvailableSlotsData(date: $date->format('Y-m-d'));
+        $multiDoctorSlots = $this->doctorAvailabilityService->getMultiDoctorSlots($requestData, $doctors);
+
         $availableDoctors = [];
+        $timeKey = $slotStart->format('H:i');
 
         foreach ($doctors as $doctor) {
-            if ($this->isDoctorAvailableAtTime($doctor, $slotStart)) {
-                $availableDoctors[] = $this->formatDoctorForSlot($doctor, $slotStart, $slotEnd, $date);
+            foreach ($multiDoctorSlots[$doctor->id] ?? [] as $slot) {
+                if ($slot['start'] === $timeKey) {
+                    $availableDoctors[] = $this->formatDoctorForSlot($doctor, $slotStart, $slotEnd, $date);
+                    break;
+                }
             }
         }
 
         return $availableDoctors;
     }
 
-    /**
-     * Build day data for a specific date
-     */
-    private function buildDayData(Collection $doctors, Carbon $date): array
-    {
-        $availableSlots = $this->getAvailableSlotsForDate($doctors, $date);
-
-        return [
-            'date' => $date->format('Y-m-d'),
-            'day_name' => $date->format('l'),
-            'available_slots' => $availableSlots,
-            'total_available_slots' => collect($availableSlots)->sum('available_count')
-        ];
-    }
-
-    /**
-     * Get available slots for all doctors on a specific date
-     */
-    private function getAvailableSlotsForDate(Collection $doctors, Carbon $date): array
-    {
-        $timeSlots = [];
-        $allPossibleSlots = $this->generateAllPossibleSlots($date);
-
-        foreach ($allPossibleSlots as $slot) {
-            $slotStart = $date->copy()->setTimeFromTimeString($slot['start']);
-            $availableCount = $this->countAvailableDoctorsForSlot($doctors, $slotStart);
-
-            if ($availableCount > 0) {
-                $timeSlots[] = [
-                    'time' => $slot['start'],
-                    'time_range' => $slot['start'] . ' - ' . $slot['end'],
-                    'available_count' => $availableCount,
-                    'total_doctors' => $doctors->count()
-                ];
-            }
-        }
-
-        return $timeSlots;
-    }
-
-    /**
-     * Count available doctors for a specific slot
-     */
-    private function countAvailableDoctorsForSlot(Collection $doctors, Carbon $slotStart): int
-    {
-        $availableCount = 0;
-
-        foreach ($doctors as $doctor) {
-            if ($this->isDoctorAvailableAtTime($doctor, $slotStart)) {
-                $availableCount++;
-            }
-        }
-
-        return $availableCount;
-    }
-
-    /**
-     * Generate all possible time slots for a day
-     */
-    private function generateAllPossibleSlots(Carbon $date): array
-    {
-        $slots = [];
-        $start = $date->copy()->setTime(self::DEFAULT_WORKING_HOURS_START, 0);
-        $end = $date->copy()->setTime(self::DEFAULT_WORKING_HOURS_END, 0);
-
-        $cursor = $start->copy();
-
-        while ($cursor->addMinutes(self::SLOT_DURATION)->lte($end)) {
-            $slotStart = $cursor->copy()->subMinutes(self::SLOT_DURATION);
-            $slotEnd = $cursor->copy();
-
-            $slots[] = [
-                'start' => $slotStart->format('H:i'),
-                'end' => $slotEnd->format('H:i')
-            ];
-        }
-
-        return $slots;
-    }
-
-    /**
-     * Check if a doctor is available at a specific time
-     */
-    private function isDoctorAvailableAtTime(Doctor $doctor, Carbon $slotStart): bool
-    {
-        $requestData = new AvailableSlotsData(date: $slotStart->format('Y-m-d'));
-        $availableSlots = $this->doctorAvailabilityService->getSlots($requestData, $doctor);
-
-        if (empty($availableSlots)) {
-            return false;
-        }
-
-        $requestedSlotTime = $slotStart->format('H:i');
-
-        foreach ($availableSlots as $slot) {
-            if ($slot['start'] === $requestedSlotTime) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Format doctor data for slot response
-     */
     private function formatDoctorForSlot(Doctor $doctor, Carbon $slotStart, Carbon $slotEnd, Carbon $date): array
     {
         return [
@@ -188,9 +107,6 @@ class AppointmentCalendarService
         ];
     }
 
-    /**
-     * Get all active doctors
-     */
     private function getActiveDoctors(): Collection
     {
         return Doctor::whereNotNull('working_hours')->get();
