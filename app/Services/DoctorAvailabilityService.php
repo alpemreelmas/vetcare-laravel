@@ -1,26 +1,25 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Services;
 
-use App\Core\Helpers\ResponseHelper;
-use App\Http\Requests\AvailableSlotsRequest;
+use App\Data\Appointments\AvailableSlotsData;
 use App\Models\Appointment;
 use App\Models\Doctor;
 use App\Models\RestrictedZone;
 use Carbon\Carbon;
-use Symfony\Component\HttpFoundation\Response;
 
-class DoctorAvailabilityController extends Controller
+class DoctorAvailabilityService
 {
     /**
      * Duration of each appointment slot in minutes
+     * 15 minutes for regular check and 5 minutes for rest, sum of it 20 minutes
      */
     private const SLOT_DURATION = 20;
 
     /**
      * Get available appointment slots for a doctor on a specified date
      */
-    public function index(AvailableSlotsRequest $request, Doctor $doctor)
+    public function getSlots(AvailableSlotsData $request, Doctor $doctor)
     {
         $selectedDate = Carbon::parse($request->date)->startOfDay();
         $now = Carbon::now();
@@ -28,7 +27,7 @@ class DoctorAvailabilityController extends Controller
         // Check if working hours are properly set
         $workingHoursString = $doctor->working_hours;
         if (!$this->hasValidWorkingHours($workingHoursString)) {
-            return ResponseHelper::success('Doctor is not available', [], Response::HTTP_OK);
+            return null;
         }
 
         // Parse working hours
@@ -52,7 +51,7 @@ class DoctorAvailabilityController extends Controller
 
         // No need to continue if start time is already past end time
         if ($startTime->gte($endTime)) {
-            return ResponseHelper::success('No available slots for this date', []);
+            return null;
         }
 
         // Get booked appointments
@@ -64,7 +63,7 @@ class DoctorAvailabilityController extends Controller
         // Calculate available slots
         $availableSlots = $this->calculateAvailableSlots($startTime, $endTime, $appointments, $restrictedZones);
 
-        return ResponseHelper::success('Available slots retrieved successfully', $availableSlots);
+        return $availableSlots;
     }
 
     /**
