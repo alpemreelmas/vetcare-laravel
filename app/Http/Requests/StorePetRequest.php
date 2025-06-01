@@ -24,12 +24,23 @@ class StorePetRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:255', Rule::unique('pets', 'name')],
+            'name' => ['required', 'string', 'max:255'],
             'species' => 'required|string|max:255',
             'breed' => 'required|string|max:255',
             'date_of_birth' => ['nullable', Rule::date()->beforeOrEqual(now())],
-            'weight' => 'nullable|numeric|min:0',
+            'weight' => 'nullable|numeric|min:0|max:999.99',
             'gender' => ['nullable', new Enum(\App\Enums\GenderEnum::class)],
+        ];
+    }
+
+    /**
+     * Get custom messages for validator errors.
+     */
+    public function messages(): array
+    {
+        return [
+            'date_of_birth.before_or_equal' => 'The date of birth cannot be in the future.',
+            'weight.max' => 'The weight cannot exceed 999.99 kg.',
         ];
     }
 }
