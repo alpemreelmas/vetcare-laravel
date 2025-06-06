@@ -39,9 +39,10 @@ class AuthController extends Controller
         $token = $user->createToken('api_auth_token')->plainTextToken;
 
         return ResponseHelper::success('User logged in successfully', [
-            'user' => $user,
+            'user' => $user->load('roles'),
             'token' => $token,
         ]);
+
     }
 
     public function logout(Request $request)
