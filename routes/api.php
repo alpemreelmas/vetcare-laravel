@@ -7,6 +7,10 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\PaymentController;
 
+Route::get('/health', function () {
+    return response()->json(['message' => 'API is running']);
+});
+
 Route::prefix("/auth")->group(
     function () {
         Route::post('/register', [AuthController::class, 'register']);
